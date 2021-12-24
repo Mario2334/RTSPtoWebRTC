@@ -17,10 +17,10 @@ let log = msg => {
 pc.ontrack = function(event) {
   stream.addTrack(event.track);
   videoElem.srcObject = stream;
-  log(event.streams.length + ' track is delivered')
+  // log(event.streams.length + ' track is delivered')
 }
 
-pc.oniceconnectionstatechange = e => log(pc.iceConnectionState)
+// pc.oniceconnectionstatechange = e => log(pc.iceConnectionState)
 
 async function handleNegotiationNeededEvent() {
   let offer = await pc.createOffer();
@@ -29,7 +29,7 @@ async function handleNegotiationNeededEvent() {
 }
 
 $(document).ready(function() {
-  $('#' + suuid).addClass('active');
+  // $('#' + suuid).addClass('active');
   getCodecInfo();
 });
 
