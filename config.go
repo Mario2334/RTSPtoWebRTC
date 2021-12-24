@@ -2,7 +2,9 @@ package main
 
 import (
 	"crypto/rand"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io/ioutil"
@@ -10,19 +12,22 @@ import (
 	"sync"
 	"time"
 
-	"github.com/deepch/vdk/codec/h264parser"
-
 	"github.com/deepch/vdk/av"
+	"github.com/deepch/vdk/codec/h264parser"
+	_ "github.com/mattn/go-sqlite3"
 )
+
+// Global sql_instance
+var sql_inst = load_db()
 
 //Config global
 var Config = loadConfig()
 
 //ConfigST struct
 type ConfigST struct {
-	mutex   sync.RWMutex
-	Server  ServerST            `json:"server"`
-	Streams map[string]StreamST `json:"streams"`
+	mutex     sync.RWMutex
+	Server    ServerST            `json:"server"`
+	Streams   map[string]StreamST `json:"streams"`
 	LastError error
 }
 
@@ -46,6 +51,14 @@ type StreamST struct {
 	RunLock      bool   `json:"-"`
 	Codecs       []av.CodecData
 	Cl           map[string]viewer
+}
+
+type ReqStream struct {
+	Name         string `json:"name"`
+	URL          string `json:"url"`
+	Status       bool   `json:"status"`
+	OnDemand     bool   `json:"on_demand"`
+	DisableAudio bool   `json:"disable_audio"`
 }
 
 type viewer struct {
@@ -114,6 +127,75 @@ func (element *ConfigST) GetWebRTCPortMax() uint16 {
 	return element.Server.WebRTCPortMax
 }
 
+func load_db() *sql.DB {
+	db, err := sql.Open("sqlite3", "./stream_db.db")
+	if err != nil {
+		log.Fatal(err)
+	}
+	//defer db.Close()
+	createStmt := `CREATE TABLE IF NOT EXISTS main.stream_store (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	name TEXT NOT NULL UNIQUE,
+	url TEXT NOT NULL,
+    status TEXT,
+    on_demand BOOLEAN,
+    disable_audio BOOLEAN,
+    debug BOOLEAN
+	);`
+	_, err = db.Exec(createStmt)
+	if err != nil {
+		log.Printf("%q: %s\n", err, createStmt)
+		errors.New("Not able to create table stream_store")
+	}
+	return db
+}
+
+func insertStreamData(rst ReqStream) {
+	tx, err := sql_inst.Begin()
+	if err != nil {
+		log.Fatal(err)
+	}
+	stmt, err := tx.Prepare("insert into stream_store (name,url,on_demand,disable_audio) values (?, ?, ?, ?);")
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer stmt.Close()
+	_, err = stmt.Exec(rst.Name, rst.URL, rst.OnDemand, rst.DisableAudio)
+	if err != nil {
+		log.Fatal(err)
+	}
+	tx.Commit()
+	Config = loadConfig()
+}
+
+func get_streams() map[string]StreamST {
+	getStreamStmt := `select name,url,on_demand,disable_audio from main.stream_store`
+	rows, err := sql_inst.Query(getStreamStmt)
+	if err != nil {
+		log.Fatal(err)
+	}
+	var streamData = map[string]StreamST{}
+
+	defer rows.Close()
+	for rows.Next() {
+		var name string
+		var url string
+		var on_demand bool
+		var disable_audio bool
+		err = rows.Scan(&name, &url, &on_demand, &disable_audio)
+		if err != nil {
+			log.Fatal(err)
+		}
+		streamData[name] = StreamST{
+			URL:          url,
+			OnDemand:     on_demand,
+			DisableAudio: disable_audio,
+			Cl:           make(map[string]viewer),
+		}
+	}
+	return streamData
+}
+
 func loadConfig() *ConfigST {
 	var tmp ConfigST
 	data, err := ioutil.ReadFile("config.json")
@@ -122,10 +204,11 @@ func loadConfig() *ConfigST {
 		if err != nil {
 			log.Fatalln(err)
 		}
-		for i, v := range tmp.Streams {
-			v.Cl = make(map[string]viewer)
-			tmp.Streams[i] = v
-		}
+		//for i, v := range tmp.Streams {
+		//	v.Cl = make(map[string]viewer)
+		//	tmp.Streams[i] = v
+		//}
+		tmp.Streams = get_streams()
 	} else {
 		addr := flag.String("listen", "8083", "HTTP host:port")
 		udpMin := flag.Int("udp_min", 0, "WebRTC UDP port min")
@@ -140,7 +223,9 @@ func loadConfig() *ConfigST {
 			tmp.Server.ICEServers = []string{*iceServer}
 		}
 
-		tmp.Streams = make(map[string]StreamST)
+		//tmp.Streams = make(map[string]StreamST)
+		tmp.Streams = get_streams()
+		print(&tmp)
 	}
 	return &tmp
 }
