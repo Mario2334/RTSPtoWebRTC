@@ -33,6 +33,7 @@ func serveHTTP() {
 	router.GET("/stream/codec/:uuid", HTTPAPIServerStreamCodec)
 	router.POST("/stream", HTTPAPIServerStreamWebRTC2)
 	router.POST("/create_stream", CreateStreamURL)
+	router.GET("/get_stream", ListStreamURL)
 
 	router.StaticFS("/static", http.Dir("web/static"))
 	err := router.Run(Config.Server.HTTPPort)
@@ -159,6 +160,12 @@ func CreateStreamURL(c *gin.Context) {
 	var streamData ReqStream
 	c.BindJSON(&streamData)
 	insertStreamData(streamData)
+	c.JSON(200, streamData)
+}
+
+func ListStreamURL(c *gin.Context) {
+	var streamData map[string]StreamST
+	streamData = get_streams()
 	c.JSON(200, streamData)
 }
 
